@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -6,46 +5,51 @@ import torch.nn.functional as F
 from collections import OrderedDict
 from utils_HSI import get_device
 import argparse
+
 # device_num=get_device(0)
 parser = argparse.ArgumentParser()
 parser.add_argument('--cuda', type=int, default=0, help="Specify CUDA device")
 args = parser.parse_args()
-device_num=get_device(args.cuda)
+device_num = get_device(args.cuda)
+
+
 # model
 def conv3x3x3(in_channel, out_channel):
     layer = nn.Sequential(
-        nn.Conv3d(in_channels=in_channel,out_channels=out_channel,kernel_size=3, stride=1,padding=1,bias=False),
+        nn.Conv3d(in_channels=in_channel, out_channels=out_channel, kernel_size=3, stride=1, padding=1, bias=False),
         nn.BatchNorm3d(out_channel),
         # nn.ReLU(inplace=True)
     )
     return layer
 
+
 class residual_block(nn.Module):
 
-    def __init__(self, in_channel,out_channel):
+    def __init__(self, in_channel, out_channel):
         super(residual_block, self).__init__()
 
-        self.conv1 = conv3x3x3(in_channel,out_channel)
-        self.conv2 = conv3x3x3(out_channel,out_channel)
-        self.conv3 = conv3x3x3(out_channel,out_channel)
+        self.conv1 = conv3x3x3(in_channel, out_channel)
+        self.conv2 = conv3x3x3(out_channel, out_channel)
+        self.conv3 = conv3x3x3(out_channel, out_channel)
 
-    def forward(self, x): #(1,1,100,9,9)
+    def forward(self, x):  # (1,1,100,9,9)
         x1 = F.relu(self.conv1(x), inplace=True)
-        x2 = F.relu(self.conv2(x1), inplace=True) 
+        x2 = F.relu(self.conv2(x1), inplace=True)
         x3 = self.conv3(x2)
 
-        out = F.relu(x1+x3, inplace=True)
+        out = F.relu(x1 + x3, inplace=True)
         return out
+
 
 class D_Res_3d_CNN(nn.Module):
     def __init__(self, in_channel, out_channel1, out_channel2, CLASS_NUM, patch_size, n_bands, embed_dim):
         super(D_Res_3d_CNN, self).__init__()
         self.n_bands = n_bands
-        self.block1 = residual_block(in_channel,out_channel1)
-        self.maxpool1 = nn.MaxPool3d(kernel_size=(1,2,2),padding=(0,1,1),stride=(4,2,2))
-        self.block2 = residual_block(out_channel1,out_channel2)
-        self.maxpool2 = nn.MaxPool3d(kernel_size=(1,2,2),stride=(1,2,2), padding=(0,1,1))
-        self.conv1 = nn.Conv3d(in_channels=out_channel2,out_channels=32,kernel_size=(1,3,3), bias=False)
+        self.block1 = residual_block(in_channel, out_channel1)
+        self.maxpool1 = nn.MaxPool3d(kernel_size=(1, 2, 2), padding=(0, 1, 1), stride=(4, 2, 2))
+        self.block2 = residual_block(out_channel1, out_channel2)
+        self.maxpool2 = nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2), padding=(0, 1, 1))
+        self.conv1 = nn.Conv3d(in_channels=out_channel2, out_channels=32, kernel_size=(1, 3, 3), bias=False)
         self.patch_size = patch_size
         # self.final_feat_dim = 128
         self.fc = nn.Linear(in_features=self._get_layer_size(), out_features=embed_dim, bias=False)
@@ -54,25 +58,25 @@ class D_Res_3d_CNN(nn.Module):
 
     def _get_layer_size(self):
         with torch.no_grad():
-            x = torch.zeros((1,1, self.n_bands,
+            x = torch.zeros((1, 1, self.n_bands,
                              self.patch_size, self.patch_size))
             x = self.block1(x)
             x = self.maxpool1(x)
             x = self.block2(x)
             x = self.maxpool2(x)
             x = self.conv1(x)
-            x = x.view(x.shape[0],-1)
+            x = x.view(x.shape[0], -1)
             s = x.size()[1]
         return s
 
     def forward(self, x):
-        x = x.unsqueeze(1) 
-        x = self.block1(x) 
-        x = self.maxpool1(x) 
-        x = self.block2(x) 
-        x = self.maxpool2(x) 
-        x = self.conv1(x) 
-        x = x.view(x.shape[0],-1)
+        x = x.unsqueeze(1)
+        x = self.block1(x)
+        x = self.maxpool1(x)
+        x = self.block2(x)
+        x = self.maxpool2(x)
+        x = self.conv1(x)
+        x = x.view(x.shape[0], -1)
         y = self.classifier(x)
         proj = self.fc(x)
         return y, proj
@@ -115,6 +119,7 @@ class ResidualAttentionBlock(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
 
+
 class Transformer(nn.Module):
     def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
         super().__init__()
@@ -125,6 +130,7 @@ class Transformer(nn.Module):
     def forward(self, x: torch.Tensor):
         return self.resblocks(x)
 
+
 ####################################################  VAE_img  #######################################################################
 class VAE_img(nn.Module):
     def __init__(self):
@@ -132,44 +138,45 @@ class VAE_img(nn.Module):
         self.fc1 = nn.Linear(33462, 4096)  # SH
         self.fc12 = nn.Linear(4096, 1024)  # SH
         # self.fc1 = nn.Linear(17238, 1024)  # UP
-        self.fc2 = nn.Linear(1024,256)    # UP SH
+        self.fc2 = nn.Linear(1024, 256)  # UP SH
         self.fc21 = nn.Linear(256, 64)
         self.fc22 = nn.Linear(256, 64)
         self.fc3 = nn.Linear(64, 256)
-        self.fc32 = nn.Linear(256,1024)    # UP  SH
-        self.fc33 = nn.Linear(1024,4096)   # SH
+        self.fc32 = nn.Linear(256, 1024)  # UP  SH
+        self.fc33 = nn.Linear(1024, 4096)  # SH
         # self.fc4 = nn.Linear(1024, 17238)  # UP
         self.fc4 = nn.Linear(4096, 33462)  # SH
 
     def encode(self, x):
         h1 = F.relu(self.fc1(x))
-        h1 = F.relu(self.fc12(h1)) 
+        h1 = F.relu(self.fc12(h1))
         h1 = F.relu(self.fc2(h1))  # UP
         mu = F.relu(self.fc21(h1))
-        logvar = F.relu(self.fc22(h1))       
-        return mu , logvar 
+        logvar = F.relu(self.fc22(h1))
+        return mu, logvar
 
     def reparametrize(self, mu, logvar):
         sigma = torch.exp(logvar)
-        #eps = torch.cuda.FloatTensor(logvar.size()[0], 1).normal_(0, 1)
+        # eps = torch.cuda.FloatTensor(logvar.size()[0], 1).normal_(0, 1)
         eps = torch.FloatTensor(logvar.size()[0], 1).normal_(0, 1).to(device_num)
         eps = eps.expand(sigma.size())
         return mu + sigma * eps
 
     def decode(self, z):
         h3 = F.relu(self.fc3(z))
-        h3 = F.relu(self.fc32(h3))   # UP
-        h3 = F.relu(self.fc33(h3))   # UP
+        h3 = F.relu(self.fc32(h3))  # UP
+        h3 = F.relu(self.fc33(h3))  # UP
         return torch.sigmoid(self.fc4(h3))
 
-    def forward(self, x):    # x:(256,48,13,13)  up(256,102,13,13)
+    def forward(self, x):  # x:(256,48,13,13)  up(256,102,13,13)
         x = x.view(x.shape[0], -1)  # (256,8112)Houston   UP(256,17238)  SH(256,33462)
-        mu, logvar = self.encode(x)  #(256,64)
-        z = self.reparametrize(mu, logvar) #(256,64)
-        rec = self.decode(z)  #(256,8112)Houston   UP(256,17238)  SH(256,33462)
-        rec = rec.reshape((256,198,13,13))  # SH
+        mu, logvar = self.encode(x)  # (256,64)
+        z = self.reparametrize(mu, logvar)  # (256,64)
+        rec = self.decode(z)  # (256,8112)Houston   UP(256,17238)  SH(256,33462)
+        rec = rec.reshape((256, 198, 13, 13))  # SH
         # rec = rec.reshape((256,102,13,13))  # UP
         return rec, z, mu, logvar
+
 
 ####################################################  VAE_tex  #######################################################################
 class VAE_tex(nn.Module):
@@ -188,12 +195,12 @@ class VAE_tex(nn.Module):
         h1 = F.relu(self.fc11(h1))
         mu = F.relu(self.fc21(h1))
         logvar = F.relu(self.fc22(h1))
-        
-        return mu , logvar  #
+
+        return mu, logvar  #
 
     def reparametrize(self, mu, logvar):
         sigma = torch.exp(logvar)
-        #eps = torch.cuda.FloatTensor(logvar.size()[0], 1).normal_(0, 1)
+        # eps = torch.cuda.FloatTensor(logvar.size()[0], 1).normal_(0, 1)
         eps = torch.FloatTensor(logvar.size()[0], 1).normal_(0, 1).to(device_num)
         eps = eps.expand(sigma.size())
         return mu + sigma * eps
@@ -202,7 +209,7 @@ class VAE_tex(nn.Module):
         # 原始解码器
         # h3 = F.relu(self.fc3(z))
         # return torch.sigmoid(self.fc4(h3))
-    
+
         # 原始解码器
         h3 = F.relu(self.fc3(z))
         h3 = F.relu(self.fc33(h3))
@@ -236,7 +243,6 @@ class LDGnet(nn.Module):
 
         self.context_length = context_length
 
-
         self.transformer = Transformer(
             width=transformer_width,
             layers=transformer_layers,
@@ -251,16 +257,17 @@ class LDGnet(nn.Module):
 
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-        self.visual = D_Res_3d_CNN(1,8,16,num_classes, vision_patch_size, inchannel, embed_dim)
+        self.visual = D_Res_3d_CNN(1, 8, 16, num_classes, vision_patch_size, inchannel, embed_dim)
         self.initialize_parameters()
 
         # VAE_tex
         self.vae_tex = VAE_tex()
         self.vae_img = VAE_img()
-        self.fusion = nn.Linear(1024,512)
+        self.fusion = nn.Linear(1024, 512)
         self.reconstruction_criterion = nn.MSELoss(size_average=False)
 
         self.adaptive_pool = nn.AdaptiveAvgPool2d((13, 13))
+
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
@@ -311,20 +318,12 @@ class LDGnet(nn.Module):
     def forward(self, current_epoch, image, text, label, text_queue_1=None, text_queue_2=None):
         image = self.adaptive_pool(image)
         imgage_prob, image_features = self.encode_image(image, mode='train')
-
-        if self.training:  # image_prob: (256,7)   image_features:(256,512)
-
-            img_rec, z_img, mu_img, logvar_img = self.vae_img(image)
+        if self.training:
+            # img_rec, z_img, mu_img, logvar_img = self.vae_img(image)  # UP
+            img_rec, z_img, mu_img, logvar_img = self.vae_img(image)  # Houston
             imgage_prob_rec, image_features_rec = self.encode_image(img_rec, mode='train')
 
-            text_features = self.encode_text(text)  # 粗粒度文本  (256,512)
-            text_features_q1 = self.encode_text(text_queue_1)  # 细粒度文本1
-            text_features_q2 = self.encode_text(text_queue_2)  # 细粒度文本2
-
-            reconstruction_loss = self.reconstruction_criterion(img_rec, image)
-            KLD = (0.5 * torch.sum(1 + logvar_img - mu_img.pow(2) - logvar_img.exp()))
-
-            # 自适应调节参数
+            # VAE的超参数
             self.current_epoch = current_epoch
             self.warmup = {'beta': {'factor': 0.25,
                                     'end_epoch': 93,
@@ -336,28 +335,49 @@ class LDGnet(nn.Module):
                     1.0 * (self.warmup['beta']['end_epoch'] - self.warmup['beta']['start_epoch']))
             f2 = f2 * (1.0 * self.warmup['beta']['factor'])
             beta = torch.FloatTensor([min(max(f2, 0), self.warmup['beta']['factor'])]).to(device_num)
-              # # VAE损失
-            fac = 5e-4
-            loss_VAE = (reconstruction_loss - beta * KLD) * fac
-            image_features = image_features / image_features.norm(dim=1, keepdim=True)  # 对张量中的元素进行归一化处理
-            text_features = text_features / text_features.norm(dim=1, keepdim=True)  # (256,512)
+            fac = 1e-3
 
+            # 1.图像VAE的loss
+            reconstruction_loss_img = self.reconstruction_criterion(img_rec, image)
+            KLD_img = (0.5 * torch.sum(1 + logvar_img - mu_img.pow(2) - logvar_img.exp()))
+            loss_VAE_img = (reconstruction_loss_img - beta * KLD_img) * fac
+
+            text_features = self.encode_text(text)
+            text_features_q1 = self.encode_text(text_queue_1)  # (256,512)
+            text_features_q2 = self.encode_text(text_queue_2)
+            fine_features = torch.concat((text_features_q1, text_features_q2), axis=1)  # (256,1024)
+
+            fine_rec, z_fine, mu_fine, logvar_fine = self.vae_tex(fine_features)  # fine_rec:(256,1024)
+
+            # 2.文本VAE loss
+            reconstruction_loss = self.reconstruction_criterion(fine_rec, fine_features)
+            KLD = (0.5 * torch.sum(1 + logvar_fine - mu_fine.pow(2) - logvar_fine.exp()))
+            loss_VAE_tex = (reconstruction_loss - beta * KLD) * fac
+
+            # normalized features
+            image_features = image_features / image_features.norm(dim=1, keepdim=True)
+            text_features = text_features / text_features.norm(dim=1, keepdim=True)
+
+            # 3.img_to_img 对比学习
+            image_features_rec = image_features_rec / image_features_rec.norm(dim=1, keepdim=True)
+            logit_scale = self.logit_scale.exp()
+            logits_per_image = logit_scale * image_features @ image_features_rec.t()  # (256,256)
+            loss_img_to_img = F.cross_entropy(logits_per_image, label.long())
+
+            # 5. img_features与q1, q2, loarse对比学习
             # cosine similarity as logits
-            ####################################################注释1#############################################################
-            logit_scale = self.logit_scale.exp()  # logit_scale是一个实数值，用于调整图像特征和文本特征之间点积（即相似度矩阵）的范围
-            # 特征提取之后，由于做了normalize，直接相乘来计算余弦距离，同一pair对的结果趋近于1，不同pair对的结果趋近于0
-            logits_per_image = logit_scale * image_features @ text_features.t()  # (256,256)
+            logit_scale = self.logit_scale.exp()
+            logits_per_image = logit_scale * image_features @ text_features.t()
             logits_per_text = logit_scale * text_features @ image_features.t()
 
             loss_img = F.cross_entropy(logits_per_image, label.long())
             loss_text = F.cross_entropy(logits_per_text, label.long())
             loss_clip = (loss_img + loss_text) / 2
-            ######################################################################################################################
-
+            # q1
+            # normalized features
             text_features_q1 = text_features_q1 / text_features_q1.norm(dim=1, keepdim=True)
 
             # cosine similarity as logits
-            ####################################################注释2#############################################################
             logit_scale = self.logit_scale.exp()
             logits_per_image = logit_scale * image_features @ text_features_q1.t()
             logits_per_text = logit_scale * text_features_q1 @ image_features.t()
@@ -365,11 +385,11 @@ class LDGnet(nn.Module):
             loss_img = F.cross_entropy(logits_per_image, label.long())
             loss_text = F.cross_entropy(logits_per_text, label.long())
             loss_q1 = (loss_img + loss_text) / 2
-
+            # q2
+            # normalized features
             text_features_q2 = text_features_q2 / text_features_q2.norm(dim=1, keepdim=True)
 
             # cosine similarity as logits
-            ####################################################注释3#############################################################
             logit_scale = self.logit_scale.exp()
             logits_per_image = logit_scale * image_features @ text_features_q2.t()
             logits_per_text = logit_scale * text_features_q2 @ image_features.t()
@@ -377,7 +397,20 @@ class LDGnet(nn.Module):
             loss_img = F.cross_entropy(logits_per_image, label.long())
             loss_text = F.cross_entropy(logits_per_text, label.long())
             loss_q2 = (loss_img + loss_text) / 2
-            return loss_clip, (loss_q1 + loss_q2) / 2, imgage_prob, loss_VAE, imgage_prob_rec
+
+            # 6. img_features与fine_rec对比学习
+            fine_rec = self.fusion(fine_rec)  # (256,1024)->(256,512)
+            fine_rec = fine_rec / fine_rec.norm(dim=1, keepdim=True)
+            logit_scale = self.logit_scale.exp()
+            logits_per_image = logit_scale * image_features @ fine_rec.t()
+            logits_per_text = logit_scale * fine_rec @ image_features.t()
+
+            loss_img = F.cross_entropy(logits_per_image, label.long())
+            loss_text = F.cross_entropy(logits_per_text, label.long())
+            loss_fine_rec = (loss_img + loss_text) / 2
+
+            return loss_VAE_img, loss_VAE_tex, loss_img_to_img, loss_clip, (
+                                                                                       loss_q1 + loss_q2) / 2, loss_fine_rec, imgage_prob, imgage_prob_rec
         else:
             return torch.tensor(0).long(), imgage_prob
 
